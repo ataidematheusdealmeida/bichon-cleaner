@@ -40,7 +40,11 @@ Requer Linux com systemd, Python 3.12 ou superior, acesso local ao armazenamento
 3. Crie uma regra no painel e ative a simulação.
 4. Confira os relatórios. Para excluir, libere a exclusão com senha e solicite uma execução.
 
-Veja [operação, regras e diagnóstico](docs/operations.md) e [segurança](SECURITY.md).
+Veja o [guia completo de uso do painel](docs/user-guide.md), [operação, regras e diagnóstico](docs/operations.md) e [segurança](SECURITY.md).
+
+## Revisão e melhorias conhecidas
+
+A [revisão técnica de 22/10/2026](docs/code-review.md) registra cinco problemas reproduzidos e outras melhorias recomendadas, com prioridades e evidências. Inclui uma janela de pausa durante a verificação final, validação tardia do limite HTTP e conflitos entre regras sobrepostas. As correções desses achados ainda não estão implementadas; os testes existentes aprovados não cobrem esses casos.
 
 ## Desenvolvimento
 
