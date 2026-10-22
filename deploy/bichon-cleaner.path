@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Bichon Cleaner when an administrator queues a request
+
+[Path]
+PathExists=/opt/bichon-cleaner/state/run-request.json
+Unit=bichon-cleaner.service
+
+[Install]
+WantedBy=multi-user.target

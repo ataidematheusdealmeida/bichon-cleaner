@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+  <title id="title">Bichon Cleaner</title>
+  <desc id="desc">Retenção no servidor de e-mail, arquivo preservado. Requer integração com Bichon.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1220"/><stop offset="1" stop-color="#153a3c"/></linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#8be8ce" stroke-opacity=".05"/></pattern>
+  </defs>
+  <rect width="1280" height="360" rx="24" fill="url(#bg)"/>
+  <rect width="1280" height="360" rx="24" fill="url(#grid)"/>
+  <rect x="60" y="48" width="230" height="30" rx="15" fill="#23463f"/>
+  <text x="78" y="69" fill="#94f2d6" font-family="sans-serif" font-size="13" font-weight="700" letter-spacing="2">IMAP · ARCHIVE · RETENTION</text>
+  <text x="60" y="156" fill="#f0f6ff" font-family="sans-serif" font-size="66" font-weight="700" letter-spacing="-2">Bichon Cleaner</text>
+  <text x="63" y="207" fill="#c0cfdd" font-family="sans-serif" font-size="24">Espaço no servidor. Histórico preservado.</text>
+  <rect x="62" y="254" width="399" height="42" rx="10" fill="#0a1925" stroke="#3d766a"/>
+  <text x="82" y="281" fill="#8ce8cd" font-family="sans-serif" font-size="17">Requer Bichon + integração de recibos</text>
+  <g transform="translate(952 92)" fill="none" stroke="#8ce8cd" stroke-width="5" stroke-linejoin="round">
+    <rect x="0" y="10" width="190" height="138" rx="19" fill="#112a31"/>
+    <path d="m4 25 91 68 91-68"/>
+    <circle cx="174" cy="145" r="44" fill="#72e0bb" stroke="#153a3c" stroke-width="9"/>
+    <path d="m154 145 14 14 26-30" stroke="#123e32" stroke-width="7"/>
+  </g>
+  <text x="968" y="305" fill="#95b9bd" font-family="sans-serif" font-size="14" letter-spacing="2">VERIFY BEFORE DELETE</text>
+</svg>

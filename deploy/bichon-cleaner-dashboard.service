@@ -1,0 +1,23 @@
+[Unit]
+Description=Bichon Cleaner administrative dashboard
+After=network-online.target
+
+[Service]
+User=10001
+Group=10001
+WorkingDirectory=/opt/bichon-cleaner
+Environment=CLEANER_ROOT=/opt/bichon-cleaner/config
+Environment=CLEANER_STATE=/opt/bichon-cleaner/state
+Environment=BICHON_URL=http://127.0.0.1:15630
+Environment=PORT=15632
+ExecStart=/opt/bichon-cleaner/.venv/bin/python /opt/bichon-cleaner/dashboard.py
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/bichon-cleaner/config /opt/bichon-cleaner/state
+
+[Install]
+WantedBy=multi-user.target

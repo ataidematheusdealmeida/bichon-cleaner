@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Bichon Cleaner schedules
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=15min
+Unit=bichon-cleaner.service
+
+[Install]
+WantedBy=timers.target
