@@ -27,7 +27,7 @@ class RuleTests(unittest.TestCase):
    self.assertNotIn('name="target"',h)
  def test_edit_pause_toggle_delete(self):
   d.save_rule(self.form,self.accounts,self.boxes);r=d.load_rules()[0];rid=r['id']
-  d.toggle_rule({'rule_id':[rid]});self.assertTrue(d.load_rules()[0]['enabled'])
+  d.toggle_rule({'rule_id':[rid],'enabled':['true']});self.assertTrue(d.load_rules()[0]['enabled'])
   d.save_rule({**self.form,'rule_id':[rid],'receipt_days':['1']},self.accounts,self.boxes)
   edited=d.load_rules()[0];self.assertEqual(edited['id'],rid);self.assertEqual(edited['revision'],1);self.assertEqual(edited['minimum_receipt_age_days'],1);self.assertFalse(edited['enabled'])
   with patch.object(d,'account_data',return_value=(self.accounts,self.boxes,'')):
@@ -37,7 +37,7 @@ class RuleTests(unittest.TestCase):
  def test_execute_now_requires_active_and_queues_once(self):
   d.save_rule(self.form,self.accounts,self.boxes);rid=d.load_rules()[0]['id']
   with self.assertRaises(ValueError):d.request_run({'rule_id':[rid]},'admin')
-  d.toggle_rule({'rule_id':[rid]});d.request_run({'rule_id':[rid]},'admin')
+  d.toggle_rule({'rule_id':[rid],'enabled':['true']});d.request_run({'rule_id':[rid]},'admin')
   import json
   request=json.loads((d.STATE/'run-request.json').read_text());self.assertEqual(request['rule_id'],rid)
   self.assertFalse(d.request_run({},'admin'))
@@ -59,7 +59,7 @@ class RuleTests(unittest.TestCase):
   h=d.report_panel();self.assertIn('&lt;script&gt;',h);self.assertNotIn('<script>alert',h)
   self.assertIn("'=danger",d.deletion_csv().decode('utf-8'))
  def test_real_deletion_requires_password_and_admin(self):
-  d.save_rule(self.form,self.accounts,self.boxes);rid=d.load_rules()[0]['id'];d.toggle_rule({'rule_id':[rid]})
+  d.save_rule(self.form,self.accounts,self.boxes);rid=d.load_rules()[0]['id'];d.toggle_rule({'rule_id':[rid],'enabled':['true']})
   form={'mode':['enable'],'confirm_delete':['on'],'password':['wrong']}
   with patch.object(d,'authenticate',side_effect=ValueError('Senha inválida')):
    with self.assertRaises(ValueError):d.set_deletion_mode(form,'admin')

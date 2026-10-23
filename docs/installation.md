@@ -58,6 +58,8 @@ systemctl status bichon-cleaner-dashboard.service bichon-cleaner.timer bichon-cl
 
 O painel escuta em `0.0.0.0:15632`, sem TLS próprio. Restrinja o acesso por firewall à rede administrativa ou use um proxy com HTTPS. Não exponha essa porta diretamente à internet.
 
+Quando servir o painel exclusivamente por HTTPS, acrescente `Environment=CLEANER_COOKIE_SECURE=true` ao serviço do painel e reinicie-o para enviar o cookie com `Secure`. Não habilite essa opção para acesso HTTP, pois o navegador deixará de enviar a sessão. As sessões agora expiram 12 horas após o login, sem extensão pelo polling; páginas abertas antes de uma atualização devem ser recarregadas e autenticadas novamente.
+
 O timer procura trabalho a cada 15 minutos; a regra ainda controla o intervalo entre ciclos. O `.path` observa pedidos do botão “Executar agora”. Sem esse serviço, o pedido aguarda o próximo timer. O worker usa lock para impedir duas execuções simultâneas.
 
 ## 5. Primeira validação

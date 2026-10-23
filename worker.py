@@ -202,27 +202,34 @@ def run(force=False, apply=False):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         request_path = state_dir / 'run-request.json'
         request = json.loads(request_path.read_text()) if request_path.exists() else {}
+        processing_path = state_dir / 'processing-request.json'
+        if processing_path.exists():
+            os.replace(processing_path, state_dir / 'failed-request.json')
         if request:
             force = True
-            request_path.unlink()
+            os.replace(request_path, processing_path)
         only_rule = request.get('rule_id')
-        immediate_existing = request.get('recheck_existing_now') is True and bool(only_rule)
         rules = json.loads((ROOT / 'config/rules.json').read_text())
         apply = apply or deletion_enabled()
         if apply and not deletion_enabled():
             raise ValueError('Exclusão real não autorizada em execution.json')
         state_path = state_dir / 'worker-state.json'
         state = json.loads(state_path.read_text()) if state_path.exists() else {'runs': {}, 'verified': {}}
-        existing_verified = {k for k, v in state.get('verified', {}).items() if v.get('count', 0) >= 1} if immediate_existing else set()
         report = {'started_at': int(time.time()), 'mode': 'apply' if apply else 'simulation', 'mailboxes': []}
-        if immediate_existing: report['immediate_existing_recheck'] = True
         atomic(state_dir / 'execution-status.json', {'state': 'running', 'started_at': report['started_at'], 'mode': report['mode']})
         if force: atomic(state_dir / 'latest-report.json', report)
         data = database(); token = None
         for mailbox in sorted(data['mailboxes'].values(), key=lambda m: (m['account_id'], m['name'])):
             account = data['accounts'].get(str(mailbox['account_id']))
             if not account or not account.get('enabled'): continue
-            aid, mid = account['id'], mailbox['id']; rule = policy(rules, aid, mid, mailbox['name'])
+            aid, mid = account['id'], mailbox['id']
+            try: rule = policy(rules, aid, mid, mailbox['name'])
+            except ValueError as error:
+                report['mailboxes'].append({'email': account['email'], 'folder': mailbox['name'],
+                    'old_messages': 0, 'checked': 0, 'verified': 0, 'ready': 0,
+                    'deleted': 0, 'blocked': 0, 'examples': [], 'error': str(error)})
+                atomic(state_dir / 'latest-report.json', report)
+                continue
             if not rule or not rule.get('enabled'): continue
             if only_rule and rule['id'] != only_rule: continue
             key = f'{rule["id"]}:{rule.get("revision", 0)}:{aid}:{mid}'
@@ -237,13 +244,9 @@ def run(force=False, apply=False):
                 uids = check(client.uid('SEARCH', None, 'BEFORE', limit.strftime('%d-%b-%Y')))[0].split()
                 row['old_messages'] = len(uids)
                 candidates = ordered_candidates([int(uid) for uid in uids], state, key, uv, rule)
-                if immediate_existing:
-                    prefix = f'{key}:{uv}:'
-                    existing_uids = {int(k[len(prefix):].split(':', 1)[0]) for k in existing_verified if k.startswith(prefix)}
-                    candidates = [uid for uid in candidates if uid in existing_uids]
                 batch = int(rule.get('batch_size', 50))
                 if not 1 <= batch <= 500: raise ValueError('Lote inválido')
-                for uid in (candidates if immediate_existing else candidates[:batch]):
+                for uid in candidates[:batch]:
                     if apply and not deletion_enabled():
                         row['interrupted'] = 'Exclusão desativada pelo administrador'; break
                     current = policy(json.loads((ROOT / 'config/rules.json').read_text()), aid, mid, mailbox['name'])
@@ -255,7 +258,7 @@ def run(force=False, apply=False):
                         receipt = verify(client, token, account, mailbox, uid, rule, limit, uv)
                         vk = f'{key}:{uv}:{uid}:{receipt["content_hash"]}'
                         record = state['verified'].get(vk, {'count': 0, 'last': 0})
-                        if (immediate_existing and vk in existing_verified) or time.time() - record['last'] >= max(1, int(rule.get('verification_gap_hours', 24))) * 3600:
+                        if time.time() - record['last'] >= max(1, int(rule.get('verification_gap_hours', 24))) * 3600:
                             record = {'count': record['count'] + 1, 'last': time.time()}
                             state['verified'][vk] = record
                         row['verified'] += 1
@@ -276,6 +279,9 @@ def run(force=False, apply=False):
                                 event = {'at': int(time.time()), 'email': account['email'], 'folder': mailbox['name'], 'mailbox_id': mid, 'uid': uid, 'uid_validity': uv, 'hash': receipt['content_hash'], 'rule_id': rule['id'], 'subject': envelope.get('subject') or '(sem assunto)', 'received_at': received_at, 'action': 'delete_requested'}
                                 audit.write(json.dumps(event) + '\n'); audit.flush(); os.fsync(audit.fileno())
                                 if not deletion_enabled(): raise ValueError('Exclusão desativada antes do expurgo')
+                                current = policy(json.loads((ROOT / 'config/rules.json').read_text()), aid, mid, mailbox['name'])
+                                if not current or not current.get('enabled') or current.get('dry_run') is not False or (current['id'], current.get('revision', 0)) != (rule['id'], rule.get('revision', 0)):
+                                    raise ValueError('Regra alterada durante a verificação final; exclusão cancelada')
                                 erase(client, uid, uv, mailbox['name'])
                                 event['action'] = 'remote_deleted'; audit.write(json.dumps(event) + '\n'); audit.flush(); os.fsync(audit.fileno())
                             row['deleted'] += 1
@@ -298,6 +304,7 @@ def run(force=False, apply=False):
             atomic(state_dir / 'latest-report.json', report)
         print(json.dumps({'mode': report['mode'], 'mailboxes': len(report['mailboxes']), 'deleted': sum(m['deleted'] for m in report['mailboxes'])}))
         atomic(state_dir / 'execution-status.json', {'state': 'finished', 'finished_at': int(time.time()), 'mode': report['mode']})
+        if request: processing_path.unlink()
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(); p.add_argument('--force', action='store_true'); p.add_argument('--apply', action='store_true')
@@ -306,5 +313,7 @@ if __name__ == '__main__':
     except BlockingIOError:
         print('Worker já em execução; solicitação mantida na fila')
     except BaseException as error:
+        processing = ROOT / 'state/processing-request.json'
+        if processing.exists(): os.replace(processing, ROOT / 'state/failed-request.json')
         atomic(ROOT / 'state/execution-status.json', {'state': 'failed', 'finished_at': int(time.time()), 'error': type(error).__name__ + ': ' + str(error)[:180]})
         raise

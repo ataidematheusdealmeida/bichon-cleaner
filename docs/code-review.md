@@ -1,6 +1,25 @@
 # Revisão técnica — 22/10/2026
 
-Código avaliado: commit `aad0facc6c804c8de310a8b501b5a587babd0dc4`. **Este relatório registra problemas e recomendações; não implementa suas correções.** Nenhum serviço de produção foi alterado nesta revisão.
+Código originalmente avaliado: commit `aad0facc6c804c8de310a8b501b5a587babd0dc4`. Os achados abaixo descrevem essa versão. Veja a atualização a seguir para o estado atual. Nenhum serviço de produção foi alterado nesta revisão ou na implementação local das correções.
+
+## Atualização de 23/10/2026
+
+| Achado | Estado atual |
+| --- | --- |
+| R1 | Regra, revisão e modo relidos depois da validação final e antes de chamar o expurgo. A pausa ainda não cancela uma operação já autorizada/enviada nem é transacional entre processos. |
+| R2 | Tamanho validado antes da leitura, cabeçalhos inválidos/negativos rejeitados e timeout de conexão de 15 segundos. Proxy/firewall e controle de taxa ainda necessários. |
+| R3 | Novas sobreposições na mesma prioridade por conta rejeitadas. Conflitos legados são registrados por pasta e não abortam as demais contas. |
+| R4 | Pedido assumido preservado em arquivo de processamento; falhas fatais preservadas em arquivo de falha, sem repetição automática. O operador pode solicitar nova execução após conferir a causa. |
+| R5 | Ativar/pausar envia o estado desejado. Ações bem-sucedidas usam redirecionamento 303 e mensagem na página seguinte. |
+| R6 | Atalho interno removido; o campo legado não dispensa mais intervalo nem lote. |
+| R7 | CSRF ligado à sessão por HMAC com chave privada; origem conferida quando enviada; permissão administrativa revalidada também na página principal; expiração fixa de 12 horas e opção de cookie Secure. Limitação de tentativas ainda deve ser tratada no proxy/autenticação. |
+| R8 | Continua dependente da integração externa do Bichon. Não foram incluídos patch de recibos, matriz de versões ou migração de esquema. |
+
+A variável sem uso foi removida. As cinco reproduções originais em `tools/review_probes.py` agora exigem resultados seguros, e testes adicionais verificam CSRF, expiração, permissão revogada, cabeçalhos inválidos, continuidade após conflito e manutenção de intervalo/lote com o campo legado.
+
+Validação da versão corrigida: **28 testes aprovados**, incluindo um teste HTTP em loopback para renderização do token da sessão, redirecionamento 303 e repetição idempotente da ativação. A compilação dos módulos Python também passou.
+
+Instalações existentes precisam receber e reiniciar explicitamente o código atualizado. Nenhuma exclusão real, restauração ou execução systemd em Linux foi testada nesta etapa. As recomendações de acessibilidade, desempenho do histórico e compatibilidade permanecem como melhorias futuras.
 
 ## Resultado
 

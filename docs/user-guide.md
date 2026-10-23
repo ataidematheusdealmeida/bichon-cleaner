@@ -2,7 +2,7 @@
 
 O **Bichon arquiva** os e-mails. O **Cleaner verifica o arquivo e exclui no servidor de origem**, quando a regra autoriza. A cópia do Bichon permanece disponível. A exclusão no IMAP é definitiva: não envia para a lixeira.
 
-Este guia descreve o comportamento do código publicado, não o estado atual de uma instalação. Confira também os [problemas conhecidos da revisão](code-review.md), principalmente antes de ampliar a exclusão automática.
+Este guia descreve o comportamento do código publicado, não o estado atual de uma instalação. Confira também o [estado das correções e limitações](code-review.md#atualização-de-23102026), principalmente antes de ampliar a exclusão automática.
 
 ## 1. Acessar
 
@@ -48,7 +48,7 @@ O padrão do formulário para idade do recibo é **14 dias**. Se a intenção é
 
 “Arquivado há um dia” não significa “e-mail com um dia”: são condições diferentes. Uma mensagem pode ter cinco anos e ter sido arquivada ontem.
 
-Evite duas regras com conjuntos de pastas parcialmente sobrepostos na mesma conta. A versão revisada aceita esse cadastro, mas pode falhar ao executar. Prefira uma regra por conta com exceções ou conjuntos sem interseção. Veja R3 no relatório.
+O cadastro rejeita duas regras com conjuntos de pastas parcialmente sobrepostos na mesma conta. Prefira uma regra por conta com exceções ou conjuntos sem interseção. Se houver conflitos antigos no arquivo de regras, a pasta ambígua fica bloqueada no relatório e as demais podem continuar.
 
 ## 4. Exemplo: todas as pastas de uma conta
 
@@ -108,12 +108,14 @@ Ligar a exclusão **não inicia uma execução por si só**. Se a mensagem já a
 
 ## 8. Alterar ou interromper
 
-- **Pausar:** desativa a regra para o processamento subsequente. Há uma janela conhecida na mensagem que já está passando pela verificação final; veja R1. Não trate o clique como cancelamento instantâneo de uma operação IMAP já enviada.
+- **Pausar:** desativa a regra para o processamento subsequente. O worker também confere a pausa após a verificação final, antes de chamar o expurgo. Não trate o clique como cancelamento instantâneo de uma operação IMAP já autorizada/enviada.
 - **Editar:** salva a configuração pausada/em simulação e incrementa a revisão. As verificações antigas não autorizam a nova revisão. Confira o modo global antes de reativar.
 - **Excluir regra:** remove a política, não mensagens ou o histórico já registrado.
 - **Desligar exclusão · voltar à simulação:** impede novas exclusões quando o worker relê a autorização global; uma operação já enviada pode terminar.
 
-Na versão revisada, evite recarregar uma página confirmando o reenvio de formulário: isso pode repetir ativar/pausar. Navegue novamente pela URL do painel e confira o estado exibido.
+As ações bem-sucedidas redirecionam para a página principal, evitando o reenvio do formulário ao atualizar. Ativar/pausar envia o estado desejado, portanto repetir uma ativação não pausa a regra. Após atualizar o código, recarregue o painel para obter os formulários e tokens novos.
+
+Se aparecer aviso de pedido interrompido, confira o relatório antes de clicar novamente em “Executar agora”. O pedido anterior é preservado para diagnóstico e não é reenviado automaticamente. Não há repetição automática de exclusões por esse mecanismo.
 
 ## 9. Histórico e dúvidas frequentes
 

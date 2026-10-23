@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Admin-only web console for mailbox-specific Bichon cleanup rules."""
-import csv,html,io,json,os,secrets,threading,time,urllib.request
+import csv,hashlib,hmac,html,io,json,os,secrets,threading,time,urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs,urlsplit
 
 ROOT=Path(os.environ.get("CLEANER_ROOT","/config")); RULES=ROOT/"rules.json"
 STATE=Path(os.environ.get("CLEANER_STATE","/state"))
 BICHON_URL=os.environ.get("BICHON_URL","http://127.0.0.1:15630").rstrip("/")
 CSRF=secrets.token_urlsafe(32); SESSIONS={}; SESSION_TTL=43200; RULE_LOCK=threading.Lock()
+CSRF_KEY=secrets.token_bytes(32)
+NOTICES={}
+COOKIE_SECURE=os.environ.get("CLEANER_COOKIE_SECURE","false").lower()=="true"
+
+def session_csrf(sid):
+ return hmac.new(CSRF_KEY,sid.encode(),hashlib.sha256).hexdigest()
 CSS="""*{box-sizing:border-box}body{font:15px system-ui;background:#0a0f1d;color:#eef3ff;margin:0}.center{min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at top,#1a2b55,#080c17 58%)}main{max-width:1100px;margin:auto;padding:28px}.login{width:min(430px,calc(100% - 32px));background:#151d31;border:1px solid #35415e;border-radius:20px;padding:32px;box-shadow:0 24px 70px #0008}.mark{width:48px;height:48px;display:grid;place-items:center;border-radius:14px;background:#4c79f6;font-size:24px}h1{margin-bottom:5px}.muted{color:#9caac2}.card{background:#151c2f;border:1px solid #29334b;border-radius:14px;padding:20px;margin:18px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}label{display:grid;gap:7px;font-weight:650}input,select{width:100%;padding:11px;border:1px solid #40506e;border-radius:9px;background:#0d1528;color:white}button{padding:11px 16px;border:0;border-radius:9px;background:#4c79f6;color:white;font-weight:750;cursor:pointer}.secondary{background:#2a3550}.notice{padding:12px;background:#133d2d;border-radius:9px;margin:12px 0}.bad{background:#562630}.badge{display:inline-block;padding:4px 8px;border-radius:99px;background:#413817;color:#ffe48a;font-size:12px}.rules{display:grid;gap:12px}.rule{border:1px solid #34405b;border-radius:11px;padding:15px;display:flex;justify-content:space-between;gap:15px;align-items:center}.rule p{margin:5px 0}.safe{color:#7fe2a7}small{display:block;color:#8593ad;margin-top:16px}header{display:flex;justify-content:space-between;align-items:start;gap:15px}@media(max-width:650px){.rule,header{display:block}.rule form,header form{margin-top:12px}}"""
 
 CSS+=".tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.tag{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:16px;background:#2a3550}.tag button{padding:0 4px;background:transparent}.except{display:flex;align-items:center;gap:8px}.except input{width:auto}[hidden]{display:none!important}"
@@ -59,7 +65,6 @@ def save_rule(form,accounts,mailboxes):
  excluded=sorted(set(form.get("excluded_mailboxes",[]))) if form.get("use_exclusions")==["on"] else []
  if not set(included+excluded)<=available: raise ValueError("Pasta não pertence à conta selecionada.")
  if set(included)&set(excluded): raise ValueError("Uma pasta não pode estar selecionada e excluída ao mesmo tempo.")
- mailbox=None
  rule={"id":secrets.token_hex(8),"account_id":aid,"account_label":(account.get("name") or account.get("email") or str(aid)) if account else "Todas as contas","mailbox_id":mid,"mailbox_name":", ".join(included) if included else "Todas as pastas","mailbox_names":included,"excluded_mailboxes":excluded,"older_than_months":integer(form,"months",1,240),"minimum_receipt_age_days":integer(form,"receipt_days",1,365),"minimum_verifications":integer(form,"verifications",2,10),"verification_gap_hours":integer(form,"gap_hours",1,720),"batch_size":integer(form,"batch",1,500),"schedule_hours":integer(form,"schedule_hours",1,168),"enabled":False,"dry_run":True,"created_at":int(time.time())}
  with RULE_LOCK:
   rules=load_rules();rid=form.get("rule_id",[""])[0]
@@ -67,6 +72,8 @@ def save_rule(form,accounts,mailboxes):
   if rid and not existing: raise ValueError("Regra não encontrada.")
   target=(aid,mid,tuple(included))
   if any(r["id"]!=rid and (r.get("account_id"),r.get("mailbox_id"),tuple(r.get("mailbox_names",[])))==target for r in rules): raise ValueError("Já existe uma regra para esse alvo. Use Editar.")
+  if included and any(r["id"]!=rid and r.get("account_id")==aid and r.get("mailbox_id") is None and set(r.get("mailbox_names",[]))&set(included) for r in rules):
+   raise ValueError("Pastas sobrepostas em regras da mesma conta. Edite a regra existente ou escolha pastas distintas.")
   if existing:
    rule["id"]=existing["id"];rule["created_at"]=existing.get("created_at",rule["created_at"])
    rule["revision"]=existing.get("revision",0)+1
@@ -74,10 +81,11 @@ def save_rule(form,accounts,mailboxes):
   rules=[r for r in rules if r["id"]!=rid];rules.append(rule);write_rules(rules)
 def toggle_rule(form):
  rid=form.get("rule_id",[""])[0]
+ if form.get("enabled") not in (["true"],["false"]):raise ValueError("Informe o estado desejado da regra.")
  with RULE_LOCK:
   rules=load_rules(); rule=next((x for x in rules if x.get("id")==rid),None)
   if not rule: raise ValueError("Regra não encontrada.")
-  rule["enabled"]=not bool(rule.get("enabled")); rule["dry_run"]=not deletion_enabled(); write_rules(rules)
+  rule["enabled"]=form["enabled"]==["true"]; rule["dry_run"]=not deletion_enabled(); write_rules(rules)
 def delete_rule(form):
  rid=form.get("rule_id",[""])[0]
  with RULE_LOCK:
@@ -164,6 +172,7 @@ def report_panel():
  counts=''.join(f'<div class="card"><strong>{value}</strong><p>{label}</p></div>' for label,value in [("Excluídos no histórico",total),("Excluídos nesta execução",totals["deleted"]),("Conferidos nesta execução",totals["checked"]),("Elegíveis após verificações",totals["ready"]),("Bloqueados nesta execução",totals["blocked"])])
  empty='<p>Nenhuma exclusão confirmada. Mensagens apenas simuladas não entram nesta lista.</p>' if not recent else ""
  error=f'<p class="notice bad">{esc(status["error"])}</p>' if status.get("error") else ""
+ if (STATE/"failed-request.json").exists():error+='<p class="notice bad">Há um pedido anterior interrompido, preservado para diagnóstico. Ele não é reenviado automaticamente. Confira os impedimentos antes de solicitar outra execução.</p>'
  return f'<section class="card"><h2>Execução e contadores</h2><p>{state} · {mode}</p><p>Última atualização: {stamp(report.get("updated_at") or report.get("finished_at") or report.get("started_at"))} (Brasília)</p>{error}<div class="grid">{counts}</div><form method="post" action="/run-now"><input type="hidden" name="csrf" value="{CSRF}"><button>Executar agora · regras ativas</button></form><p><button type="button" class="secondary" onclick="refreshReport()">Atualizar contadores</button></p><div style="overflow:auto"><table cellpadding="8"><tr><th>Conta</th><th>Pasta</th><th>Antigas</th><th>Conferidas</th><th>Verificadas</th><th>Elegíveis</th><th>Excluídas</th><th>Impedimentos</th></tr>{"".join(rows)}</table></div><small>Executar agora ignora o agendamento, mas mantém os intervalos de segurança e o modo de simulação.</small></section><section class="card" id="history-section"><h2>E-mails excluídos do servidor</h2><p>Últimas 100 exclusões confirmadas. <a href="/deleted.csv">Baixar histórico completo (CSV)</a></p>{empty}<div style="overflow:auto"><table cellpadding="8"><tr><th>Excluído em (Brasília)</th><th>Conta</th><th>Pasta</th><th>Assunto</th><th>Recebido em</th><th>UID</th></tr>{"".join(deleted_rows)}</table></div></section>'
 
 REPORT_SCRIPT="""
@@ -185,17 +194,20 @@ def page(token,username,message="",error=False):
  rules=load_rules();rules_json=json.dumps(rules,ensure_ascii=False).replace("<",chr(92)+"u003c")
  for r in rules:
   state=("exclusão agendada" if deletion_enabled() and not r.get("dry_run",True) else "simulação agendada") if r.get("enabled") else "pausada"
-  cards.append(f'''<article class="rule"><div><strong>{esc(r["account_label"])} · {esc(r["mailbox_name"])}</strong><p class="muted">Recebidos há mais de {r["older_than_months"]} meses · Exceto: {esc(", ".join(r.get("excluded_mailboxes",[])) or "nenhuma")} · arquivo há {r["minimum_receipt_age_days"]} dia(s) · {r["minimum_verifications"]} verificações · lote {r["batch_size"]} · a cada {r["schedule_hours"]}h</p><span class="badge">{state}</span></div><form method="post" action="/toggle"><input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="rule_id" value="{esc(r["id"])}"><button class="secondary">{"Pausar" if r.get("enabled") else ("Ativar exclusão" if deletion_enabled() else "Ativar simulação")}</button></form><form method="post" action="/run-now"><input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="rule_id" value="{esc(r['id'])}"><button class="secondary" {"disabled" if not r.get("enabled") else ""}>Executar agora</button></form><button type="button" class="secondary" data-edit="{esc(r['id'])}">Editar</button><form method="post" action="/delete-rule" onsubmit="return confirm('Excluir esta regra? Nenhum e-mail será apagado.');"><input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="rule_id" value="{esc(r['id'])}"><button class="secondary">Excluir regra</button></form></article>''')
+  cards.append(f'''<article class="rule"><div><strong>{esc(r["account_label"])} · {esc(r["mailbox_name"])}</strong><p class="muted">Recebidos há mais de {r["older_than_months"]} meses · Exceto: {esc(", ".join(r.get("excluded_mailboxes",[])) or "nenhuma")} · arquivo há {r["minimum_receipt_age_days"]} dia(s) · {r["minimum_verifications"]} verificações · lote {r["batch_size"]} · a cada {r["schedule_hours"]}h</p><span class="badge">{state}</span></div><form method="post" action="/toggle"><input type="hidden" name="enabled" value="{"false" if r.get("enabled") else "true"}"><input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="rule_id" value="{esc(r["id"])}"><button class="secondary">{"Pausar" if r.get("enabled") else ("Ativar exclusão" if deletion_enabled() else "Ativar simulação")}</button></form><form method="post" action="/run-now"><input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="rule_id" value="{esc(r['id'])}"><button class="secondary" {"disabled" if not r.get("enabled") else ""}>Executar agora</button></form><button type="button" class="secondary" data-edit="{esc(r['id'])}">Editar</button><form method="post" action="/delete-rule" onsubmit="return confirm('Excluir esta regra? Nenhum e-mail será apagado.');"><input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="rule_id" value="{esc(r['id'])}"><button class="secondary">Excluir regra</button></form></article>''')
  disabled="" if options else " disabled"; empty='<p class="muted">Nenhuma regra criada.</p>' if not cards else ""
  return f'''<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Bichon Cleaner</title><style>{CSS}</style></head><body><main><header><div><h1>Bichon Cleaner</h1><p class="muted">Retenção das caixas de e-mail · Arquivo preservado no Bichon</p></div><form method="post" action="/logout"><input type="hidden" name="csrf" value="{CSRF}"><button class="secondary">Sair</button></form></header><nav class="navlinks"><a href="#execution-report">Execução</a><a href="#rules-section">Regras</a><a href="#rule-form">Nova regra</a><a href="#history-section">Histórico</a></nav>{notice}{mode_panel()}<div id="execution-report">{report_panel()}</div><section class="card" id="rules-section"><h2>Regras de retenção</h2><div class="rules">{''.join(cards)}{empty}</div></section><form id="rule-form" method="post" action="/rules"><input type="hidden" name="rule_id" value=""><input type="hidden" name="csrf" value="{CSRF}"><section class="card"><h2 id="form-title">Nova regra</h2><p class="safe">O worker usa as credenciais já cadastradas, sem exibi-las. O arquivo no Bichon é preservado.</p><div class="grid"><label>Conta<select name="account_id" id="account"{disabled}>{''.join(options)}</select></label><div><label>Pastas<select id="include-picker"><option value="">Adicionar pasta…</option></select></label><div id="include-tags" class="tags"></div><small>Sem seleção: todas as pastas da conta.</small></div><div><label class="except"><input type="checkbox" name="use_exclusions" id="except-toggle"> Exceto</label><div id="except-fields" hidden><label>Pastas protegidas<select id="exclude-picker"><option value="">Adicionar pasta…</option></select></label><div id="exclude-tags" class="tags"></div><small>Estas pastas não serão processadas.</small></div></div><label>Mais antigos que (meses)<input type="number" name="months" min="1" max="240" value="12"></label><label>Recibo arquivado há (dias)<input type="number" name="receipt_days" min="1" value="14"></label><label>Verificações mínimas<input type="number" name="verifications" min="2" value="2"></label><label>Intervalo entre verificações (h)<input type="number" name="gap_hours" min="1" value="24"></label><label>Mensagens por lote<input type="number" name="batch" min="1" max="500" value="50"></label><label>Executar a cada (h)<input type="number" name="schedule_hours" min="1" max="168" value="24"></label></div><p><button id="save-rule"{disabled}>Criar regra pausada</button> <button type="button" id="cancel-edit" class="secondary" hidden>Cancelar edição</button></p><small>Regras novas ou editadas ficam pausadas e em simulação. Ative após conferir os parâmetros. A exclusão depende do modo liberado pelo administrador com senha. Uma regra por pasta prevalece sobre a regra da conta, que prevalece sobre a global. Uma exceção pausada protege essa caixa/pasta.</small></section></form></main><script type="application/json" id="folder-data">{folder_json}</script><script type="application/json" id="rules-data">{rules_json}</script><script>{TAG_SCRIPT}{CRUD_SCRIPT}{REPORT_SCRIPT}</script></body></html>'''.encode()
 class Handler(BaseHTTPRequestHandler):
+ def setup(self):
+  super().setup();self.connection.settimeout(15)
  def sid(self): return next((p.strip()[8:] for p in self.headers.get("Cookie","").split(";") if p.strip().startswith("session=")),"")
  def session(self):
   sid=self.sid(); r=SESSIONS.get(sid)
-  if not r or r[0]<=time.time(): SESSIONS.pop(sid,None); return None
-  SESSIONS[sid]=(time.time()+SESSION_TTL,r[1],r[2]); return r[1],r[2]
+  if not r or r[0]<=time.time(): SESSIONS.pop(sid,None);NOTICES.pop(sid,None); return None
+  return r[1],r[2]
  def respond(self,content,status=200,content_type="text/html; charset=utf-8"):
   if isinstance(content,str):content=content.encode('utf-8')
+  if self.sid() in SESSIONS and b'action="/login"' not in content:content=content.replace(('value="'+CSRF+'"').encode(),('value="'+session_csrf(self.sid())+'"').encode())
   self.send_response(status); self.send_header("Content-Type",content_type); self.send_header("Content-Length",str(len(content))); self.send_header("Cache-Control","no-store"); self.end_headers(); self.wfile.write(content)
  def redirect(self,path,cookie=None):
   self.send_response(303); self.send_header("Location",path)
@@ -205,22 +217,29 @@ class Handler(BaseHTTPRequestHandler):
   s=self.session()
   if not s:self.respond(login_page(),401 if self.path in ("/report","/deleted.csv") else 200);return
   try:
+   if "system:root" not in api("/api/v1/current-user",s[0]).get("global_permissions",[]):raise PermissionError("Acesso administrativo necessário.")
    if self.path in ("/report","/deleted.csv"):
-    if "system:root" not in api("/api/v1/current-user",s[0]).get("global_permissions",[]):raise PermissionError("Acesso administrativo necessário.")
     if self.path=="/report":self.respond(report_panel())
     else:self.respond(deletion_csv(),content_type="text/csv; charset=utf-8")
-   else:self.respond(page(*s))
+   else:self.respond(page(*s,NOTICES.pop(self.sid(),'')))
   except (BrokenPipeError,ConnectionResetError):return
   except Exception:self.respond(login_page("Não foi possível carregar o painel. Entre novamente ou tente atualizar."),401)
  def do_POST(self):
-  size=int(self.headers.get("Content-Length","0")); form=parse_qs(self.rfile.read(size).decode(),keep_blank_values=True)
+  try:size=int(self.headers.get("Content-Length","0"))
+  except ValueError:self.respond(b"Content-Length invalido",400);return
+  if size<0:self.respond(b"Content-Length invalido",400);return
   if size>65536:self.respond(b"Requisicao muito grande",413);return
-  if not secrets.compare_digest(form.get("csrf",[""])[0],CSRF):self.respond(login_page("Sessão expirada. Recarregue a página."),403);return
+  try:form=parse_qs(self.rfile.read(size).decode(),keep_blank_values=True,max_num_fields=1000)
+  except (UnicodeDecodeError,ValueError):self.respond(b"Formulario invalido",400);return
+  origin=self.headers.get("Origin")
+  if origin and urlsplit(origin).netloc!=self.headers.get("Host"):self.respond(b"Origem invalida",403);return
+  expected=CSRF if self.path=="/login" else session_csrf(self.sid())
+  if not secrets.compare_digest(form.get("csrf",[""])[0],expected):self.respond(login_page("Sessão expirada. Recarregue a página."),403);return
   if self.path=="/login":
    try:token,user=authenticate(form.get("username",[""])[0],form.get("password",[""])[0])
    except (ValueError,PermissionError) as e:time.sleep(.4);self.respond(login_page(str(e)),401);return
    except Exception:self.respond(login_page("Não foi possível autenticar no Bichon."),502);return
-   sid=secrets.token_urlsafe(32);SESSIONS[sid]=(time.time()+SESSION_TTL,token,user);self.redirect("/",f"session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}");return
+   sid=secrets.token_urlsafe(32);SESSIONS[sid]=(time.time()+SESSION_TTL,token,user);self.redirect("/",f"session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}"+("; Secure" if COOKIE_SECURE else ""));return
   s=self.session()
   if not s:self.redirect("/login");return
   if self.path=="/logout":SESSIONS.pop(self.sid(),None);self.redirect("/login","session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");return
@@ -234,9 +253,9 @@ class Handler(BaseHTTPRequestHandler):
    elif self.path=="/rules":
     accounts,mailboxes,_=account_data(s[0]);save_rule(form,accounts,mailboxes);msg="Regra atualizada e pausada." if form.get("rule_id",[""])[0] else "Regra criada pausada e em modo de simulação."
    elif self.path=="/delete-rule":delete_rule(form);msg="Regra excluída. Nenhum e-mail foi apagado."
-   elif self.path=="/toggle":toggle_rule(form);msg="Estado da simulação atualizado."
+   elif self.path=="/toggle":toggle_rule(form);msg="Regra ativada." if form.get("enabled")==["true"] else "Regra pausada."
    else:raise ValueError("Ação desconhecida.")
-   self.respond(page(*s,msg))
+   NOTICES[self.sid()]=msg;self.redirect("/")
   except Exception as e:self.respond(page(*s,str(e),True),400)
  def log_message(self,fmt,*args):print(fmt%args,flush=True)
 if __name__=="__main__":ThreadingHTTPServer(("0.0.0.0",int(os.environ.get("PORT","15632"))),Handler).serve_forever()

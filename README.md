@@ -44,7 +44,7 @@ Veja o [guia completo de uso do painel](docs/user-guide.md), [operação, regras
 
 ## Revisão e melhorias conhecidas
 
-A [revisão técnica de 22/10/2026](docs/code-review.md) registra cinco problemas reproduzidos e outras melhorias recomendadas, com prioridades e evidências. Inclui uma janela de pausa durante a verificação final, validação tardia do limite HTTP e conflitos entre regras sobrepostas. As correções desses achados ainda não estão implementadas; os testes existentes aprovados não cobrem esses casos.
+A [revisão técnica de 22/10/2026](docs/code-review.md) registra os achados originais e o estado das [correções de 23/10/2026](docs/code-review.md#atualização-de-23102026). A versão atual corrige os cinco cenários reproduzidos, remove o atalho que dispensava intervalo/lote e reforça a proteção de sessão. As alterações no repositório não atualizam automaticamente uma instalação em produção.
 
 ## Desenvolvimento
 

@@ -1,4 +1,4 @@
-"""Read-only review reproductions; all IMAP and Bichon calls are mocked."""
+"""Safety regression checks; all IMAP and Bichon calls are mocked."""
 import contextlib, io, json, sys, tempfile, time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory() as temp:
             stack.enter_context(patch.object(w.fcntl,name,value,create=True))
         erase = stack.enter_context(patch.object(w,'erase'))
         with contextlib.redirect_stdout(io.StringIO()):w.run(force=True)
-        findings['pause_during_final_verify_still_calls_erase'] = erase.call_count == 1
+        findings['pause_during_final_verify_blocks_erase'] = erase.call_count == 0
 
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp); (root/'config').mkdir(); (root/'state').mkdir()
@@ -48,7 +48,8 @@ with tempfile.TemporaryDirectory() as temp:
     with patch.object(w,'ROOT',root),patch.object(w,'database',side_effect=ValueError('WAL incomplete')),patch.object(w.os,'geteuid',return_value=1000,create=True),patch.object(w.fcntl,'flock',create=True),patch.object(w.fcntl,'LOCK_EX',2,create=True),patch.object(w.fcntl,'LOCK_NB',4,create=True):
         try:w.run()
         except ValueError:pass
-    findings['queued_request_lost_on_database_failure'] = not request.exists()
+    retained = root/'state/processing-request.json'
+    findings['queued_request_retained_on_database_failure'] = retained.exists() and json.loads(retained.read_text())['rule_id'] is None
 
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp)
@@ -57,13 +58,12 @@ with tempfile.TemporaryDirectory() as temp:
         boxes={1:[{'id':10,'name':'INBOX'},{'id':11,'name':'Sent'},{'id':12,'name':'Protected'}]}
         form={'account_id':['1'],'months':['12'],'receipt_days':['1'],'verifications':['2'],'gap_hours':['24'],'batch':['50'],'schedule_hours':['24']}
         d.save_rule({**form,'mailbox_names':['INBOX','Sent']},accounts,boxes)
-        d.save_rule({**form,'mailbox_names':['INBOX','Protected']},accounts,boxes)
-        try:w.policy(d.load_rules(),1,10,'INBOX')
-        except ValueError:findings['overlapping_rules_accepted_then_policy_fails'] = True
+        try:d.save_rule({**form,'mailbox_names':['INBOX','Protected']},accounts,boxes)
+        except ValueError:findings['overlapping_rules_rejected'] = len(d.load_rules())==1
         rid=d.load_rules()[0]['id']
-        d.toggle_rule({'rule_id':[rid]}); first=d.load_rules()[0]['enabled']
-        d.toggle_rule({'rule_id':[rid]}); second=d.load_rules()[0]['enabled']
-        findings['replayed_toggle_reverses_previous_action'] = first and not second
+        d.toggle_rule({'rule_id':[rid],'enabled':['true']}); first=d.load_rules()[0]['enabled']
+        d.toggle_rule({'rule_id':[rid],'enabled':['true']}); second=d.load_rules()[0]['enabled']
+        findings['replayed_enable_is_idempotent'] = first and second
 
 class Body:
     def __init__(self):self.read_sizes=[]
@@ -71,6 +71,6 @@ class Body:
 handler=object.__new__(d.Handler);handler.headers={'Content-Length':'1000000000'}
 handler.rfile=Body();handler.respond=MagicMock()
 handler.do_POST()
-findings['oversized_body_read_before_413'] = handler.rfile.read_sizes == [1000000000] and handler.respond.call_args.args[1]==413
+findings['oversized_body_rejected_without_read'] = handler.rfile.read_sizes == [] and handler.respond.call_args.args[1]==413
 print(json.dumps(findings,indent=2))
 assert len(findings)==5 and all(findings.values())

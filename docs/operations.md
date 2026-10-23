@@ -31,9 +31,13 @@ Liberar exclusão altera as regras ativas para `dry_run=false`, mas não inicia 
 
 O comando `worker.py --force` tem o mesmo efeito de ignorar o agendamento. `--apply` ainda exige a liberação global. Sem `--apply`, o worker também exclui se a liberação global estiver ativa e a regra permitir: não use a ausência desse argumento como garantia de simulação.
 
-### Exceção operacional herdada
+### Pedidos interrompidos e proteção dos intervalos
 
-O código contém suporte ao campo interno `recheck_existing_now=true` em `state/run-request.json`, somente quando há `rule_id`. Ele revalida apenas identidades já verificadas antes dessa execução, **dispensa a espera entre verificações e ignora o tamanho do lote**. Ainda exige idade do arquivo, nova validação completa, número mínimo de verificações e autorização de exclusão. O painel não cria esse campo; não o utilize em rotinas normais nem o confunda com “Executar agora”.
+O campo legado `recheck_existing_now` não tem mais efeito: toda execução mantém intervalo e lote. O worker move um pedido assumido para `state/processing-request.json` e só o remove após concluir o ciclo. Falhas fatais na execução pela CLI preservam o pedido em `state/failed-request.json`. Uma interrupção abrupta pode deixar `processing-request.json`; a próxima inicialização o preserva como pedido falho.
+
+Pedidos falhos não são reenviados automaticamente, evitando um ciclo contínuo de falhas pelo systemd `.path`. O painel informa a existência do pedido falho. Consulte a causa e solicite nova execução pelo botão; o arquivo falho permanece disponível para diagnóstico. Falhas individuais por mensagem/pasta ficam no relatório do ciclo, sem necessariamente tornar o pedido inteiro falho.
+
+O worker relê a regra depois da última validação e antes de chamar o expurgo. Isso bloqueia alterações ocorridas durante aquela validação. Uma operação IMAP já autorizada/enviada ainda pode terminar; a pausa não é um cancelamento transacional entre o painel e o servidor de e-mail.
 
 ## Contadores e histórico
 
